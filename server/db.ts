@@ -1,6 +1,18 @@
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users } from "../drizzle/schema";
+import { 
+  InsertUser, 
+  users, 
+  profiles, 
+  InsertProfile,
+  publications,
+  InsertPublication,
+  publicationAuthors,
+  shares,
+  InsertShare,
+  comments,
+  InsertComment
+} from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -89,4 +101,95 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
-// TODO: add feature queries here as your schema grows.
+// Profile queries
+export async function getProfileByUserId(userId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(profiles).where(eq(profiles.userId, userId)).limit(1);
+  return result[0];
+}
+
+export async function getAllActiveProfiles() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(profiles).where(eq(profiles.isActive, 1)).orderBy(profiles.displayOrder);
+}
+
+export async function upsertProfile(profile: InsertProfile) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const existing = await getProfileByUserId(profile.userId);
+  if (existing) {
+    await db.update(profiles).set(profile).where(eq(profiles.userId, profile.userId));
+    return getProfileByUserId(profile.userId);
+  } else {
+    await db.insert(profiles).values(profile);
+    return getProfileByUserId(profile.userId);
+  }
+}
+
+// Publication queries
+export async function getAllPublications() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(publications).orderBy(desc(publications.year));
+}
+
+export async function getPublicationsByProfileId(profileId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  
+  const result = await db
+    .select({ publication: publications })
+    .from(publicationAuthors)
+    .innerJoin(publications, eq(publicationAuthors.publicationId, publications.id))
+    .where(eq(publicationAuthors.profileId, profileId))
+    .orderBy(desc(publications.year));
+  
+  return result.map(r => r.publication);
+}
+
+export async function createPublication(publication: InsertPublication, authorProfileIds: number[]) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  
+  const result = await db.insert(publications).values(publication);
+  const publicationId = Number(result[0].insertId);
+  
+  if (authorProfileIds.length > 0) {
+    await db.insert(publicationAuthors).values(
+      authorProfileIds.map(profileId => ({ publicationId, profileId }))
+    );
+  }
+  
+  return publicationId;
+}
+
+// Share queries
+export async function getAllShares() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(shares).orderBy(desc(shares.createdAt));
+}
+
+export async function createShare(share: InsertShare) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(shares).values(share);
+  return Number(result[0].insertId);
+}
+
+// Comment queries
+export async function getCommentsByShareId(shareId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(comments).where(eq(comments.shareId, shareId)).orderBy(comments.createdAt);
+}
+
+export async function createComment(comment: InsertComment) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(comments).values(comment);
+  return Number(result[0].insertId);
+}
